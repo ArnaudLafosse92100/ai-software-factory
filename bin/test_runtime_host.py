@@ -79,7 +79,7 @@ class RuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="runtime test ")
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()
         self.root = self.base / "application"
         self.root.mkdir()
         (self.root / "app.py").write_text(TARGET)

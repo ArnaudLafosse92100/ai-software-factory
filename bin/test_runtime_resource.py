@@ -32,7 +32,7 @@ class ResourceTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="resource test ")
         self.addCleanup(self.temp.cleanup)
-        self.base = Path(self.temp.name)
+        self.base = Path(self.temp.name).resolve()
         self.repo = self.base / "delivery"
         (self.repo / "factory").mkdir(parents=True)
         for name in ("runtime_resource.py", "runtime_host.py", "runtime_process.py"):

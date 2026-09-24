@@ -31,6 +31,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 HTTP = build_opener(ProxyHandler({}), NoRedirect())
 def safe_path(root, relative):
+    root = root.resolve()
     if (not isinstance(relative, str) or not relative or Path(relative).anchor
             or Path(relative).drive):
         raise ValueError("source paths must be relative")
@@ -48,6 +49,7 @@ def safe_path(root, relative):
 
 
 def source_files(root, includes):
+    root = root.resolve()
     files = {}
     for rel in includes:
         path = safe_path(root, rel)
@@ -128,7 +130,9 @@ class Environments:
                 self.bindings[name] = True
             self.roots[name] = path
         self.stopping = stopping
-        self.base = Path(tempfile.mkdtemp(prefix="factory-runtime-"))
+        # macOS exposes /var through /private/var. Keep the containment root in the
+        # same canonical form as safe_path() uses for its children.
+        self.base = Path(tempfile.mkdtemp(prefix="factory-runtime-")).resolve()
         self.active = {}
         self.used_ports = set()
 
