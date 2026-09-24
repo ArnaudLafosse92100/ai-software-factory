@@ -204,7 +204,7 @@ def main(argv=None) -> int:
     start = sub.add_parser("start", help="start a bound root as this delivering revision")
     start.add_argument("--slot", required=True)
     start.add_argument("--root", required=True)
-    start.add_argument("--connection-file", required=True, type=Path)
+    start.add_argument("--connection-file", type=Path)
     start.add_argument("--mutation")
     args = parser.parse_args(argv)
     try:
@@ -214,7 +214,9 @@ def main(argv=None) -> int:
         repository, revision = delivery()
         command = [sys.executable, str(repository / "factory/runtime_host.py"), "start",
                    "--slot", args.slot, "--root", args.root,
-                   "--expected-revision", revision, "--connection-file", str(args.connection_file)]
+                   "--expected-revision", revision]
+        if args.connection_file:
+            command.extend(["--connection-file", str(args.connection_file)])
         if args.mutation:
             command.extend(["--mutation", args.mutation])
         return subprocess.run(command, cwd=repository).returncode

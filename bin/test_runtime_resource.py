@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -71,11 +72,17 @@ class ResourceTests(unittest.TestCase):
         return path
 
     def start(self, connection, slot):
-        connection_file = self.base / "connection.json"
-        connection_file.write_text(json.dumps(connection))
-        result = subprocess.run([sys.executable, str(self.repo / "factory/runtime_resource.py"),
-                                 "start", "--slot", slot, "--root", "candidate",
-                                 "--connection-file", str(connection_file)], cwd=self.repo,
+        command = [sys.executable, str(self.repo / "factory/runtime_resource.py"),
+                   "start", "--slot", slot, "--root", "candidate"]
+        environment = None
+        if connection is not None:
+            connection_file = self.base / "connection.json"
+            connection_file.write_text(json.dumps(connection))
+            command.extend(["--connection-file", str(connection_file)])
+        else:
+            environment = os.environ.copy()
+            environment.update(self.host.environment())
+        result = subprocess.run(command, cwd=self.repo, env=environment,
                                 capture_output=True, text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
@@ -104,6 +111,23 @@ class ResourceTests(unittest.TestCase):
             self.assertNotEqual(first, item["source_revision"])
             self.assertNotEqual(first_item["input_digest"], item["input_digest"])
             self.assertNotEqual(first_item["resource_digest"], item["resource_digest"])
+
+    def test_foreground_environment_preserves_clean_checkout_validation(self):
+        revision = self.git("rev-parse", "HEAD")
+        with RuntimeHost(self.config()) as self.host:
+            self.assertEqual(self.prepare(revision).returncode, 0)
+            item = self.start(None, "foreground")
+            self.assertEqual(item["source_revision"], revision)
+
+            (self.repo / "app.py").write_text(APP.replace("VALUE", "dirty"), encoding="utf-8")
+            command = [sys.executable, str(self.repo / "factory/runtime_resource.py"),
+                       "start", "--slot", "dirty", "--root", "candidate"]
+            environment = os.environ.copy()
+            environment.update(self.host.environment())
+            refused = subprocess.run(command, cwd=self.repo, env=environment,
+                                     capture_output=True, text=True, timeout=10)
+            self.assertNotEqual(refused.returncode, 0)
+            self.assertIn("Runtime resource operation refused", refused.stderr)
 
     def test_stale_checkout_and_unowned_destination_are_refused(self):
         revision = self.git("rev-parse", "HEAD")

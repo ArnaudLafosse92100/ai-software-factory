@@ -105,13 +105,17 @@ boundary:
 {
   "environment": {
     "ownership": "external",
-    "setup": "python factory/runtime_resource.py prepare --config /private/runtime.json --destination /private/candidate && python factory/runtime_host.py setup --slot baseline --connection-file /private/connection.json",
-    "start": "python factory/runtime_resource.py start --slot baseline --root candidate --connection-file /private/connection.json",
-    "teardown": "python factory/runtime_host.py teardown --slot baseline --connection-file /private/connection.json",
-    "candidate_command": "python factory/runtime_host.py identity --slot baseline --connection-file /private/connection.json"
+    "setup": "python factory/runtime_resource.py prepare --config /private/runtime.json --destination /private/candidate && python factory/runtime_host.py setup --slot baseline",
+    "start": "python factory/runtime_resource.py start --slot baseline --root candidate",
+    "teardown": "python factory/runtime_host.py teardown --slot baseline",
+    "candidate_command": "python factory/runtime_host.py identity --slot baseline"
   }
 }
 ```
+
+Those commands use the credentials injected by Factory's foreground
+`--runtime-host` mode. With a manual `serve` process, add
+`--connection-file /private/connection.json` to the wrapper and host commands.
 
 Run these commands with the delivered checkout as the workflow working directory.
 Absolute executable and script paths are safe only when the script belongs to that
