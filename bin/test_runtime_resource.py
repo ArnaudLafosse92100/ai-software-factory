@@ -9,10 +9,12 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from urllib.request import urlopen
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "template/factory"))
+import runtime_resource
 from runtime_host import RuntimeHost, request
 
 
@@ -179,6 +181,36 @@ class ResourceTests(unittest.TestCase):
                 self.assertEqual((self.resource / ".factory-resource.json").read_bytes(),
                                  original_marker)
                 self.assertEqual((self.resource / "app.py").read_bytes(), original_app)
+
+    def test_failed_promotion_restores_previous_owned_resource(self):
+        first = self.git("rev-parse", "HEAD")
+        with mock.patch.object(runtime_resource, "delivery", return_value=(self.repo, first)):
+            runtime_resource.prepare(self.resource, self.config(), first)
+        original_marker = (self.resource / runtime_resource.MARKER).read_bytes()
+        original_app = (self.resource / "app.py").read_bytes()
+
+        (self.repo / "app.py").write_text(APP.replace("VALUE", "second"), encoding="utf-8")
+        self.git("add", "app.py")
+        self.git("commit", "-m", "second candidate")
+        second = self.git("rev-parse", "HEAD")
+        original_replace = Path.replace
+
+        def fail_new_resource_promotion(source, target):
+            source = Path(source)
+            if (Path(target) == self.resource
+                    and source.name.startswith(".factory-resource-")
+                    and not source.name.startswith(".factory-resource-backup-")):
+                raise OSError("simulated promotion failure")
+            return original_replace(source, target)
+
+        with (mock.patch.object(runtime_resource, "delivery", return_value=(self.repo, second)),
+              mock.patch.object(Path, "replace", fail_new_resource_promotion),
+              self.assertRaisesRegex(OSError, "simulated promotion failure")):
+            runtime_resource.prepare(self.resource, self.config(), second)
+
+        self.assertEqual((self.resource / runtime_resource.MARKER).read_bytes(), original_marker)
+        self.assertEqual((self.resource / "app.py").read_bytes(), original_app)
+        self.assertEqual(list(self.base.glob(".factory-resource-*")), [])
 
     def test_absolute_helper_from_an_old_checkout_is_refused_in_delivering_cwd(self):
         old_repo = self.base / "old-delivery"

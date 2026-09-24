@@ -163,6 +163,7 @@ def prepare(destination: Path, config: Path, expected_revision: str | None = Non
 
     staging = Path(tempfile.mkdtemp(prefix=".factory-resource-", dir=destination.parent))
     archive = staging.with_suffix(".zip")
+    backup = None
     try:
         result = subprocess.run(["git", "archive", "--format=zip", "--output", str(archive),
                                  actual_revision, "--", *includes], cwd=repository, timeout=120)
@@ -185,13 +186,27 @@ def prepare(destination: Path, config: Path, expected_revision: str | None = Non
         }
         (staging / MARKER).write_text(json.dumps(mapping, indent=2) + "\n", encoding="utf-8")
         if destination.exists():
-            remove_tree(destination)
-        staging.replace(destination)
+            backup = Path(tempfile.mkdtemp(
+                prefix=".factory-resource-backup-", dir=destination.parent
+            ))
+            backup.rmdir()
+            destination.replace(backup)
+        try:
+            staging.replace(destination)
+        except BaseException:
+            if backup is not None and backup.exists() and not destination.exists():
+                backup.replace(destination)
+            raise
+        if backup is not None:
+            remove_tree(backup)
+            backup = None
         return mapping
     finally:
         archive.unlink(missing_ok=True)
         if staging.exists():
             remove_tree(staging)
+        if backup is not None and backup.exists() and destination.exists():
+            remove_tree(backup)
 
 
 def main(argv=None) -> int:

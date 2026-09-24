@@ -91,7 +91,10 @@ list and resource digest in the owned root. It
 refuses modified tracked source, a revision other than the helper's own checkout
 HEAD, forbidden/escaping/missing/linked includes, broad or relative destinations,
 and any existing directory it did not create.
-It never deletes an unowned directory. No `rm`, `find`, shell pipe or platform
+It never deletes an unowned directory. When replacing an owned resource, it keeps
+the prior directory on the same filesystem and restores it if promotion of the new
+resource fails. A reported preparation failure therefore preserves the last usable
+candidate. No `rm`, `find`, shell pipe or platform
 archive program is part of the normal path.
 
 The helper and the workflow working directory must resolve to the same delivering
