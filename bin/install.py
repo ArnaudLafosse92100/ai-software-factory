@@ -14,9 +14,9 @@ import consumer
 
 PERSONAL = {"factory/config.py", "harness/harness.config.json", "harness/runtime.inputs.json",
             "harness/END-TO-END.md", "harness/mutations/defects.json", "MISSION.md",
-            "FACTORY.md", "FACTORY_RULES.md", ".factory/holdout/HOLDOUT.md",
-            ".factory/locks/floor.json"}
-RETIRED = [".archon/workflows/factory", "factory/nodeio.py", ".factory/notify.sh"] + [
+            "FACTORY.md", "FACTORY_RULES.md", ".factory/holdout/HOLDOUT.md"}
+RETIRED = [".archon/workflows/factory", "factory/nodeio.py", ".factory/notify.sh",
+           ".factory/locks/floor.json"] + [
     f".claude/skills/factory-{name}" for name in
     ("setup", "triage", "plan", "implement", "review", "judge", "fix", "e2e", "holdout")]
 AGENTS_POINTER = (b"See [factory workflow policy](factory/WORKFLOW_POLICY.md) for "

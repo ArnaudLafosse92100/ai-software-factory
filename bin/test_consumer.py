@@ -576,6 +576,9 @@ class InstallTests(Fixture):
         custom = self.app / ".claude/skills/factory-e2e/SKILL.md"
         custom.parent.mkdir(parents=True)
         custom.write_bytes(b"custom original\r\n")
+        retired_floor = self.app / ".factory/locks/floor.json"
+        retired_floor.parent.mkdir(parents=True)
+        retired_floor.write_bytes(b'{"unit_tests": 42}\n')
         provider = self.base / "home/.archon/config.yaml"
         provider.parent.mkdir(parents=True)
         provider.write_bytes(b"defaultAssistant: custom\r\nprivate: preserved\n")
@@ -588,6 +591,11 @@ class InstallTests(Fixture):
             self.assertEqual((self.app / rel).read_bytes(), data, rel)
         self.assertFalse(custom.exists())
         self.assertEqual((self.app / ".factory/retired/.claude/skills/factory-e2e/SKILL.md").read_bytes(), b"custom original\r\n")
+        self.assertFalse(retired_floor.exists())
+        self.assertEqual(
+            (self.app / ".factory/retired/.factory/locks/floor.json").read_bytes(),
+            b'{"unit_tests": 42}\n',
+        )
         with contextlib.redirect_stdout(io.StringIO()) as out:
             sync(self.app)
         self.assertNotIn("install ", out.getvalue())
