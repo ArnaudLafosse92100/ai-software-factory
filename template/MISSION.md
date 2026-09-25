@@ -79,7 +79,7 @@ calls it a bug. Changing one requires a human commit.
 3. **The factory cannot modify governance files.** `MISSION.md`, `FACTORY_RULES.md`
    and the conventions file are the constitution. A PR touching any of them is an
    automatic reject.
-4. **The factory cannot modify its own judge.** `harness/`, `.factory/locks/` and
+4. **The factory cannot modify its own judge.** `harness/` and
    `.factory/holdout/` define what "working" means here. Adding an assertion is
    always welcome; removing or loosening one is a human decision, always.
 
