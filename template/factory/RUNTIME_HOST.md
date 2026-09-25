@@ -150,6 +150,7 @@ These commands do no evaluation and contain no workflow policy:
 ```text
 python factory/runtime_host.py setup --slot baseline
 python factory/runtime_host.py start --slot baseline --root candidate --expected-revision <delivered-sha>
+python factory/runtime_host.py restart --slot baseline
 python factory/runtime_host.py describe --slot baseline
 python factory/runtime_host.py identity --slot baseline
 python factory/runtime_host.py teardown --slot baseline
@@ -167,6 +168,17 @@ roots retain `--expected-source` but make no delivered-revision claim. The share
 composition decides when to issue it; there is no Python suite loop. Concurrent
 cases must use distinct slots. This owner serializes requests.
 
+For an active HTTP slot, `restart` terminates the complete owned process tree and
+launches the same trusted configured command against the exact existing frozen
+snapshot and state directory. It allocates a fresh loopback target and returns a
+new candidate identity bound to that launch; persistent data can therefore be
+tested across a real process boundary without resnapshotting or rerunning setup.
+Callers provide only the slot, never a command, path, environment, or port. The
+old process is fully stopped before relaunch. If relaunch, readiness, or identity
+verification fails, the host removes the whole slot because the stopped instance
+cannot be rolled back safely. `restart` supports HTTP slots only; finite CLI and
+library executions remain single-run.
+
 `setup` is an idempotent cleanup boundary; provisioning happens atomically in
 `start`. `teardown` is idempotent and terminates descendants before deleting files.
 Authenticated malformed/failed requests clean all active slots, fail closed, and
@@ -178,7 +190,7 @@ Unauthenticated requests return 403 without disturbing running apps.
 bytes before project setup),
 `shape`, `target`, `exit_code`, `snapshot`, and `state`. `identity` prints only the
 candidate string for the producer's `candidate_command`. The local control API
-uses POST `/setup`, `/start`, `/identity`, `/teardown` with these CLI fields as JSON
+uses POST `/setup`, `/start`, `/restart`, `/identity`, `/teardown` with these CLI fields as JSON
 and `Authorization: Bearer <private token>`; `/identity` returns full typed JSON.
 The control URL is IPv4 loopback only. Requests are bounded; redirects are refused.
 
@@ -279,9 +291,10 @@ OS-enforced immutable store against a same-user adversary.
 project adapter script). Start executes it once, waits for completion, cleans its
 descendants and returns the actual exit code and candidate binding, with null
 target. Identity attests that execution's snapshot/command, not a continuing
-server. It does not infer assertion success from exit zero. Interactive CLI,
-arbitrary agent-supplied library calls and restarts with preserved state are
-unsupported. Ordinary app stdout/stderr is withheld to prevent accidental secret
+server. It does not infer assertion success from exit zero. Interactive CLI and
+arbitrary agent-supplied library calls are unsupported. State-preserving restart
+is limited to an already active owned HTTP slot. Ordinary app stdout/stderr is
+withheld to prevent accidental secret
 publication; project adapters can write measurement files under returned `state`
 for native verifier tool access until teardown.
 
