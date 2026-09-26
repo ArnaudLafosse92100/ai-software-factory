@@ -37,6 +37,8 @@ if args[:2] == ["version", "--json"]:
     revision = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"],
                               check=True, capture_output=True, text=True).stdout.strip()
     capabilities = [] if os.environ.get("FACTORY_TEST_CODEGRAPH_CAPABILITY") == "missing" else ["codegraph_managed_v1"]
+    if os.environ.get("FACTORY_TEST_MODEL_BINDING_CAPABILITY") != "missing":
+        capabilities.append("portable-model-aliases-v1")
     print(json.dumps({"name": "archon", "version": "fixture", "revision": revision,
                       "capabilities": capabilities,
                       "contracts": json.loads(os.environ["FACTORY_TEST_CONTRACTS"])}))
@@ -154,6 +156,11 @@ class Fixture(unittest.TestCase):
 
 
 class ConsumerTests(Fixture):
+    def test_doctor_requires_portable_model_alias_capability(self):
+        with patch.dict(os.environ, {"FACTORY_TEST_MODEL_BINDING_CAPABILITY": "missing"}):
+            with self.assertRaisesRegex(ValueError, "portable-model-aliases-v1"):
+                consumer.doctor(self.settings)
+
     def test_code_intelligence_settings_are_strict_and_legacy_defaults_off(self):
         settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
         legacy = {key: value for key, value in self.settings.items()
@@ -627,6 +634,7 @@ class ConsumerTests(Fixture):
     def test_capability_probe_refuses_unsupported_cli(self):
         with patch.object(consumer, "checked", return_value="no capabilities"), \
              patch.object(consumer, "validate_engine_contract"), \
+             patch.object(consumer, "validate_model_binding_support"), \
              patch.object(consumer, "verify_source", return_value=self.source), \
              patch.object(consumer, "code_intelligence_support", return_value=True), \
              patch.object(consumer, "code_intelligence_registry", return_value={

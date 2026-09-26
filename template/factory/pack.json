@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/ArnaudLafosse92100/Archon",
-  "integration_revision_required": "f7ef49442c153c7697f0a313caa6e8d25d1fda60",
+  "integration_revision_required": "260828b530fec1f047d04c459dabf1a2ffeaabbb",
   "description": "Pinned workflow-only SDLC source with grounded intake, reviewed delivery, scoped validation reuse, independent runtime and holdout verification, bounded repair, discovery handling, merge queues, and deterministic deployment. Factory remains a thin consumer; workflow gates own decisions and scheduling remains external.",
   "source_directory": ".archon/workflows/sdlc",
   "default_inputs": {
@@ -61,7 +61,49 @@
     "cancel": [],
     "resume": []
   },
+  "model_binding_contract": {
+    "version": 2,
+    "telemetry_field": "model_ref",
+    "system_aliases": {
+      "@implementer": [
+        "implement"
+      ],
+      "@architect": [
+        "plan"
+      ],
+      "@reviewer": [
+        "code",
+        "docs",
+        "errors",
+        "scope",
+        "seams",
+        "simplify",
+        "tests"
+      ],
+      "@adjudicator": [
+        "synthesize"
+      ]
+    }
+  },
   "contracts": {
+    "workflow.portable_model_aliases": {
+      "version": 1,
+      "aliases": {
+        "@implementer": "medium",
+        "@architect": "large",
+        "@reviewer": "medium",
+        "@adjudicator": "medium"
+      },
+      "telemetryFields": [
+        "model_ref",
+        "provider_source"
+      ],
+      "lifecycleEvents": [
+        "node_started",
+        "node_completed",
+        "node_failed"
+      ]
+    },
     "node_failed.data.error_class": {
       "version": 1,
       "values": [

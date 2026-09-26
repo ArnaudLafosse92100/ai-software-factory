@@ -18,6 +18,7 @@ EXPECTED_ARCHON_REVISION_FLAG = "--expected-archon-revision"
 CODE_INTELLIGENCE_MODES = frozenset({"off", "optional", "required"})
 DEFAULT_CODE_INTELLIGENCE = {"mode": "off"}
 CODEGRAPH_MANAGED_RESOURCE = "codegraph_managed_v1"
+PORTABLE_MODEL_ALIASES_CAPABILITY = "portable-model-aliases-v1"
 CODEGRAPH_RUN_FLAG = "--codegraph"
 FACTORY_OWNED_CAPABILITIES = {
     "run": {EXPECTED_ARCHON_REVISION_FLAG},
@@ -299,6 +300,24 @@ def code_intelligence_support(settings: dict, source: Path) -> bool:
     return CODEGRAPH_MANAGED_RESOURCE in capabilities
 
 
+def validate_model_binding_support(settings: dict, source: Path) -> None:
+    """Require the pinned engine capability promised by this Factory pack."""
+    contract = MANIFEST.get("model_binding_contract")
+    if contract is None:
+        return
+    if (not isinstance(contract, dict) or contract.get("version") != 2
+            or contract.get("telemetry_field") != "model_ref"
+            or not isinstance(contract.get("system_aliases"), dict)):
+        raise ValueError("Factory model_binding_contract is invalid")
+    data = engine_contract(settings, source)
+    capabilities = data.get("capabilities", [])
+    if (not isinstance(capabilities, list)
+            or PORTABLE_MODEL_ALIASES_CAPABILITY not in capabilities):
+        raise ValueError(
+            "Pinned Archon does not support portable-model-aliases-v1"
+        )
+
+
 def code_intelligence_registry(settings: dict, source: Path) -> dict:
     """Read Archon's non-secret registry check without invoking the adapter."""
     result = execute([*cli(settings, source), "doctor", "--json"], source)
@@ -344,6 +363,7 @@ def code_intelligence_registry(settings: dict, source: Path) -> dict:
 
 def doctor(settings: dict) -> dict:
     source = verify_source(settings)
+    validate_model_binding_support(settings, source)
     mode = code_intelligence_mode(settings)
     supported = code_intelligence_support(settings, source)
     registry = None
