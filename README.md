@@ -46,11 +46,11 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`4a46cec7c66fde903dd096203405734836db90c2`, whose SDLC pack supports grounded
+`80d7725ab56364c729fcbdd0b0dc1e894f15f592`, whose SDLC pack supports grounded
 intake, reviewed delivery, scoped validation reuse, independent runtime and holdout
 verification, bounded repair, discovery handling, merge queues and deterministic
-deployment. This compatibility revision is published in the project fork while its
-small engine-contract backport is tracked in [Archon PR 3496](https://github.com/coleam00/Archon/pull/3496).
+deployment. Publish this exact compatibility revision in the project fork before
+promoting this Factory candidate to new installations.
 `factory doctor` verifies both
 the full revision and the declared `node_failed.data.error_class` contract before a
 run can start. Native live acceptance remains separate from installation readiness.
