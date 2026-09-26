@@ -33,6 +33,7 @@
     "run": [
       "--workflow-source",
       "--input",
+      "--model",
       "--adopt",
       "--detach",
       "--json"

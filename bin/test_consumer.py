@@ -46,7 +46,7 @@ if args == ["--help"]:
 if "--help" in args:
     command = args[1]
     owned = {
-        "run": "--workflow-source --input --adopt --detach",
+        "run": "--workflow-source --input --model --adopt --detach",
         "get": "--events",
         "approve": "--comment",
         "reject": "--reason",
@@ -161,6 +161,30 @@ class ConsumerTests(Fixture):
                 values += [arg.removeprefix("--input=") for arg in argv
                            if arg.startswith("--input=")]
                 self.assertEqual(values, ["state_labels={}"])
+
+    def test_run_model_bindings_pass_through_unchanged(self):
+        result = self.command(
+            "run",
+            "archon-ship",
+            "--model",
+            "@planner=codex/gpt-5.6-sol",
+            "--model=@reviewer=claude/opus",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        first_model = argv.index("--model")
+        self.assertEqual(
+            argv[first_model:first_model + 4],
+            [
+                "--model",
+                "@planner=codex/gpt-5.6-sol",
+                "--model=@reviewer=claude/opus",
+                "--json",
+            ],
+        )
+        self.assertEqual(argv.count("--model"), 1)
+        self.assertEqual(argv.count("--model=@reviewer=claude/opus"), 1)
 
     def test_defaults_do_not_enter_messages_or_native_continuations(self):
         result = self.command("run", "archon-ship", "--", "--input", "state_labels={}")
