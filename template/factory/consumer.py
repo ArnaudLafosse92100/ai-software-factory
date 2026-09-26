@@ -13,6 +13,10 @@ HERE = Path(__file__).resolve().parent
 MANIFEST = json.loads((HERE / "pack.json").read_text(encoding="utf-8"))
 SETTINGS = ".factory/consumer.json"
 ENTRY = "packages/cli/src/cli.ts"
+EXPECTED_ARCHON_REVISION_FLAG = "--expected-archon-revision"
+FACTORY_OWNED_CAPABILITIES = {
+    "run": {EXPECTED_ARCHON_REVISION_FLAG},
+}
 
 
 def execute(argv: list[str], cwd: Path, *, capture: bool = True,
@@ -49,6 +53,42 @@ def read_settings(root: Path) -> dict:
     if not isinstance(settings, dict):
         raise ValueError(f"Invalid consumer settings: {path}")
     return settings
+
+
+def expected_archon_revision(action: str, args: list[str]) -> tuple[str | None, list[str]]:
+    """Consume Factory's exact-revision assertion without forwarding it to Archon."""
+    matches = [index for index, arg in enumerate(args)
+               if arg == EXPECTED_ARCHON_REVISION_FLAG
+               or arg.startswith(EXPECTED_ARCHON_REVISION_FLAG + "=")]
+    if not matches:
+        return None, list(args)
+    if action != "run":
+        raise ValueError(f"{EXPECTED_ARCHON_REVISION_FLAG} supports factory run only")
+    if len(matches) != 1:
+        raise ValueError(f"{EXPECTED_ARCHON_REVISION_FLAG} must be supplied exactly once")
+    index = matches[0]
+    boundary = args.index("--") if "--" in args else len(args)
+    if index >= boundary:
+        raise ValueError(f"{EXPECTED_ARCHON_REVISION_FLAG} must precede --")
+    if args[index] != EXPECTED_ARCHON_REVISION_FLAG:
+        raise ValueError(
+            f"{EXPECTED_ARCHON_REVISION_FLAG} requires the separate form: "
+            f"{EXPECTED_ARCHON_REVISION_FLAG} <40-character SHA>"
+        )
+    if index + 1 >= boundary:
+        raise ValueError(f"{EXPECTED_ARCHON_REVISION_FLAG} requires a 40-character SHA")
+    revision = args[index + 1]
+    if not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError(f"{EXPECTED_ARCHON_REVISION_FLAG} requires a full lowercase commit SHA")
+    return revision, [*args[:index], *args[index + 2:]]
+
+
+def require_expected_archon_revision(settings: dict, expected: str) -> None:
+    actual = settings.get("revision")
+    if actual != expected:
+        raise ValueError(
+            f"Pinned Archon revision mismatch: expected {expected}, found {actual!r}"
+        )
 
 
 def verify_source(settings: dict) -> Path:
@@ -204,9 +244,17 @@ def doctor(settings: dict) -> dict:
     global_help = checked([*cli(settings, source), "--help"], source)
     shared_help = checked([*cli(settings, source), "workflow", "--help"], source)
     for command, flags in MANIFEST["capabilities"].items():
+        factory_owned = FACTORY_OWNED_CAPABILITIES.get(command, set())
+        missing_factory = factory_owned - set(flags)
+        if missing_factory:
+            raise ValueError(
+                f"Factory manifest missing consumer-owned {command} capability: "
+                f"{sorted(missing_factory)}"
+            )
         help_text = checked([*cli(settings, source), "workflow", command, "--help"], source)
         if f"workflow {command}" not in help_text or any(
-                flag not in help_text and flag not in shared_help and flag not in global_help
+                flag not in factory_owned
+                and flag not in help_text and flag not in shared_help and flag not in global_help
                 for flag in flags):
             raise ValueError(f"Pinned CLI missing workflow {command} capability: {flags}")
     discovered = discover(settings, source)
@@ -256,6 +304,7 @@ def with_default_inputs(name: str, args: list[str], options: list[str]) -> list[
 
 def invoke(root: Path, action: str, args: list[str]) -> int:
     args = list(args)
+    expected_revision, args = expected_archon_revision(action, args)
     runtime_config = None
     options = args[:args.index("--")] if "--" in args else args[:]
     runtime_flags = [a for a in options if a.split("=", 1)[0] == "--runtime-host"]
@@ -318,6 +367,8 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
     if action in {"run", "resume", "approve", "respond"} and stop.exists():
         raise ValueError("Local STOP is set. Use unhalt to permit launch/continuation; cancel remains available")
     settings = read_settings(root)
+    if expected_revision is not None:
+        require_expected_archon_revision(settings, expected_revision)
     source = verify_source(settings)
     if action == "doctor":
         print(json.dumps(doctor(settings), indent=2))
@@ -348,19 +399,34 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         print(f"Factory source={source} revision={settings['revision']} local_STOP={stop.exists()}", file=sys.stderr)
     # Native output, exit code, inputs, identity and gates pass through unchanged.
     # No subprocess deadline or retry can guess whether a native run is alive.
+    def launch(env: dict | None = None) -> int:
+        launch_settings, launch_source = settings, source
+        launch_native = list(native)
+        if expected_revision is not None:
+            # Re-read the git-common-dir settings at the last possible point. A
+            # linked worktree's local .factory file is not the consumer authority,
+            # and a pin changed after preflight must never reach the native spawn.
+            launch_settings = read_settings(root)
+            require_expected_archon_revision(launch_settings, expected_revision)
+            launch_source = verify_source(launch_settings)
+            if "--workflow-source" in launch_native:
+                source_index = launch_native.index("--workflow-source") + 1
+                launch_native[source_index] = str(launch_source)
+        return execute([*cli(launch_settings, launch_source), *launch_native], root,
+                       capture=False, timeout=None, env=env).returncode
+
     if runtime_config:
         from runtime_host import RuntimeHost
         with RuntimeHost(root / runtime_config) as host:
-            return execute([*cli(settings, source), *native], root, capture=False,
-                           timeout=None, env={**os.environ, **host.environment()}).returncode
-    return execute([*cli(settings, source), *native], root,
-                   capture=False, timeout=None).returncode
+            return launch({**os.environ, **host.environment()})
+    return launch()
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
     if not args or args[0] in {"--help", "-h"}:
         print("factory run <shared-workflow> [native arguments]\n"
+              "factory run <shared-workflow> --expected-archon-revision <SHA> [native arguments]\n"
               "factory run <shared-workflow> --runtime-host <config.json> [foreground native arguments]\n"
               "Runtime host: fresh ordinary apps; detach/resume unsupported. Manual: python factory/runtime_host.py serve --help\n"
               "factory tick (one scheduled shared workflow, foreground)\n"

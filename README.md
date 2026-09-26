@@ -262,6 +262,21 @@ python factory/consumer.py cancel <run-id>
 python factory/consumer.py halt
 ```
 
+An integration layer that has already selected an exact Archon pin can bind the
+launch to the pin Factory actually uses:
+
+```bash
+python factory/consumer.py run archon-ship \
+  --expected-archon-revision <40-character-SHA> \
+  --input target=https://github.com/OWNER/REPO/issues/1 --detach --json
+```
+
+This Factory-owned flag is consumed before the native argv is built. It must be
+supplied once in the separate form shown above and before `--`. Immediately before
+spawning Archon, the consumer rereads `.factory/consumer.json` from the repository's
+Git common root, checks that its effective revision still matches, and revalidates
+that pinned source. Omitting the flag preserves the ordinary consumer contract.
+
 `halt` blocks new launches and continuations. Cancel an active run explicitly;
 `unhalt` allows launches again. Runtime-host runs stay in the foreground.
 

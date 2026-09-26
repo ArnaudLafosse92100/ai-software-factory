@@ -32,6 +32,7 @@
   "capabilities": {
     "run": [
       "--workflow-source",
+      "--expected-archon-revision",
       "--input",
       "--model",
       "--adopt",

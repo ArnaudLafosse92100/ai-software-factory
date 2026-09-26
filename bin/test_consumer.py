@@ -186,6 +186,39 @@ class ConsumerTests(Fixture):
         self.assertEqual(argv.count("--model"), 1)
         self.assertEqual(argv.count("--model=@reviewer=claude/opus"), 1)
 
+    def test_expected_archon_revision_is_consumed_once_and_never_forwarded(self):
+        result = self.command(
+            "run",
+            "archon-ship",
+            consumer.EXPECTED_ARCHON_REVISION_FLAG,
+            self.revision,
+            "--model",
+            "large=codex/gpt-6-astra",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertNotIn(consumer.EXPECTED_ARCHON_REVISION_FLAG, argv)
+        self.assertNotIn(self.revision, argv)
+        self.assertEqual(argv.count("large=codex/gpt-6-astra"), 1)
+
+        successful_calls = len([row for row in self.calls() if row[:2] == ["workflow", "run"]])
+        invalid_forms = (
+            (consumer.EXPECTED_ARCHON_REVISION_FLAG, self.revision,
+             consumer.EXPECTED_ARCHON_REVISION_FLAG, self.revision),
+            (f"{consumer.EXPECTED_ARCHON_REVISION_FLAG}={self.revision}",),
+            (consumer.EXPECTED_ARCHON_REVISION_FLAG, "A" * 40),
+            ("--", consumer.EXPECTED_ARCHON_REVISION_FLAG, self.revision),
+        )
+        for extra in invalid_forms:
+            with self.subTest(extra=extra):
+                refused = self.command("run", "archon-ship", *extra, "--json")
+                self.assertNotEqual(refused.returncode, 0)
+        self.assertEqual(
+            len([row for row in self.calls() if row[:2] == ["workflow", "run"]]),
+            successful_calls,
+        )
+
     def test_defaults_do_not_enter_messages_or_native_continuations(self):
         result = self.command("run", "archon-ship", "--", "--input", "state_labels={}")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -425,6 +458,13 @@ class ConsumerTests(Fixture):
         self.assertIn(["--help"], calls)
         self.assertIn(["workflow", "get", "--help"], calls)
 
+    def test_doctor_requires_declared_consumer_owned_revision_capability(self):
+        manifest = json.loads(json.dumps(consumer.MANIFEST))
+        manifest["capabilities"]["run"].remove(consumer.EXPECTED_ARCHON_REVISION_FLAG)
+        with patch.object(consumer, "MANIFEST", manifest):
+            with self.assertRaisesRegex(ValueError, "missing consumer-owned run capability"):
+                consumer.doctor(self.settings)
+
     def test_doctor_refuses_wrong_revision_or_failure_contract(self):
         expected = consumer.MANIFEST["contracts"]
         with patch.object(consumer, "checked", return_value=json.dumps({
@@ -469,6 +509,56 @@ class ConsumerTests(Fixture):
         argv = json.loads(result.stdout)["argv"]
         self.assertEqual(argv[argv.index("--cwd") + 1], str(worktree))
         self.assertEqual(argv[argv.index("--workflow-source") + 1], str(self.source))
+
+    def test_expected_revision_uses_shared_settings_not_divergent_worktree_file(self):
+        worktree = self.base / "application expected pin worktree"
+        self.git(self.app, "worktree", "add", "-b", "expected-pin-branch", str(worktree))
+        local_settings = worktree / consumer.SETTINGS
+        local_settings.parent.mkdir(parents=True, exist_ok=True)
+        local_settings.write_text(json.dumps({
+            "source": str(self.base / ("0" * 40)),
+            "revision": "0" * 40,
+            "bun": "must-not-run",
+        }))
+
+        result = subprocess.run(
+            [sys.executable, str(HOME / "bin/factory.py"), "run", "archon-ship",
+             consumer.EXPECTED_ARCHON_REVISION_FLAG, self.revision, "--json"],
+            cwd=worktree, capture_output=True, text=True, timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual(argv[argv.index("--cwd") + 1], str(worktree))
+        self.assertEqual(argv[argv.index("--workflow-source") + 1], str(self.source))
+        self.assertNotIn(consumer.EXPECTED_ARCHON_REVISION_FLAG, argv)
+
+        refused = subprocess.run(
+            [sys.executable, str(HOME / "bin/factory.py"), "run", "archon-ship",
+             consumer.EXPECTED_ARCHON_REVISION_FLAG, "0" * 40, "--json"],
+            cwd=worktree, capture_output=True, text=True, timeout=30,
+        )
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("Pinned Archon revision mismatch", refused.stderr)
+
+    def test_expected_revision_is_rechecked_after_preflight_before_spawn(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+
+        def mutate_pin(*_args, **_kwargs):
+            settings_path.write_text(json.dumps({
+                "source": str(self.source),
+                "revision": "0" * 40,
+                "bun": sys.executable,
+            }))
+
+        with patch.object(consumer, "validate", side_effect=mutate_pin):
+            with self.assertRaisesRegex(ValueError, "Pinned Archon revision mismatch"):
+                consumer.invoke(
+                    self.app,
+                    "run",
+                    ["archon-ship", consumer.EXPECTED_ARCHON_REVISION_FLAG,
+                     self.revision, "--json"],
+                )
+        self.assertFalse(any(row[:2] == ["workflow", "run"] for row in self.calls()))
 
 
 class SourceConformanceTests(unittest.TestCase):
