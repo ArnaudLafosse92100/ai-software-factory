@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -14,9 +15,59 @@ MANIFEST = json.loads((HERE / "pack.json").read_text(encoding="utf-8"))
 SETTINGS = ".factory/consumer.json"
 ENTRY = "packages/cli/src/cli.ts"
 EXPECTED_ARCHON_REVISION_FLAG = "--expected-archon-revision"
+CODE_INTELLIGENCE_MODES = frozenset({"off", "optional", "required"})
+DEFAULT_CODE_INTELLIGENCE = {"mode": "off"}
+CODEGRAPH_MANAGED_RESOURCE = "codegraph_managed_v1"
+CODEGRAPH_RUN_FLAG = "--codegraph"
 FACTORY_OWNED_CAPABILITIES = {
     "run": {EXPECTED_ARCHON_REVISION_FLAG},
 }
+
+
+def code_intelligence_mode(settings: dict) -> str:
+    """Return the operator-owned policy without accepting executable configuration."""
+    policy = settings.get("code_intelligence")
+    if policy is None:
+        # Existing installations predate the consent field. They remain byte-compatible
+        # and, critically, never gain indexing or a new MCP server during an upgrade.
+        return "off"
+    if not isinstance(policy, dict) or set(policy) != {"mode"}:
+        raise ValueError("code_intelligence must contain only a mode field")
+    mode = policy.get("mode")
+    if mode not in CODE_INTELLIGENCE_MODES:
+        raise ValueError("code_intelligence.mode must be off, optional, or required")
+    return mode
+
+
+def validate_settings(settings: dict) -> dict:
+    if not isinstance(settings, dict):
+        raise ValueError("Consumer settings must be a JSON object")
+    code_intelligence_mode(settings)
+    return settings
+
+
+def write_settings(root: Path, settings: dict) -> None:
+    """Atomically write machine-local settings in the shared Git root."""
+    settings = validate_settings(settings)
+    path = shared_root(root) / SETTINGS
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
+                                           dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            json.dump(settings, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            shutil.copystat(path, temporary)
+        os.replace(temporary, path)
+    finally:
+        if fd != -1:
+            os.close(fd)
+        temporary.unlink(missing_ok=True)
 
 
 def execute(argv: list[str], cwd: Path, *, capture: bool = True,
@@ -49,10 +100,11 @@ def read_settings(root: Path) -> dict:
     if not path.is_file():
         raise ValueError("Integration pin required. Run factory init --source <complete Archon "
                          "checkout or URL> --revision <40-character SHA> --cache <directory>.")
-    settings = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(settings, dict):
-        raise ValueError(f"Invalid consumer settings: {path}")
-    return settings
+    try:
+        settings = json.loads(path.read_text(encoding="utf-8"))
+        return validate_settings(settings)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"Invalid consumer settings: {path}: {error}") from error
 
 
 def expected_archon_revision(action: str, args: list[str]) -> tuple[str | None, list[str]]:
@@ -213,7 +265,7 @@ def validate(settings: dict, source: Path, name: str) -> None:
         raise ValueError(f"Workflow/command validation failed for {name}: {data}")
 
 
-def validate_engine_contract(settings: dict, source: Path) -> None:
+def engine_contract(settings: dict, source: Path) -> dict:
     raw = checked([*cli(settings, source), "version", "--json"], source)
     try:
         data = json.loads(raw)
@@ -232,11 +284,78 @@ def validate_engine_contract(settings: dict, source: Path) -> None:
             "Pinned CLI contract declaration mismatch: "
             f"expected {MANIFEST['contracts']}, found {declared!r}"
         )
+    return data
+
+
+def validate_engine_contract(settings: dict, source: Path) -> None:
+    engine_contract(settings, source)
+
+
+def code_intelligence_support(settings: dict, source: Path) -> bool:
+    capabilities = engine_contract(settings, source).get("capabilities", [])
+    if not isinstance(capabilities, list) or any(not isinstance(item, str)
+                                                  for item in capabilities):
+        raise ValueError("Pinned CLI capabilities must be an array of strings")
+    return CODEGRAPH_MANAGED_RESOURCE in capabilities
+
+
+def code_intelligence_registry(settings: dict, source: Path) -> dict:
+    """Read Archon's non-secret registry check without invoking the adapter."""
+    result = execute([*cli(settings, source), "doctor", "--json"], source)
+    if result.returncode not in {0, 1}:
+        raise ValueError(f"Pinned CLI doctor exited unexpectedly with {result.returncode}")
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise ValueError("Pinned CLI doctor contract is not valid JSON") from error
+    checks = data.get("checks") if isinstance(data, dict) else None
+    if not isinstance(checks, list):
+        raise ValueError("Pinned CLI doctor returned no checks array")
+    rows = [row for row in checks
+            if isinstance(row, dict) and row.get("id") == CODEGRAPH_MANAGED_RESOURCE]
+    if len(rows) != 1:
+        raise ValueError("Pinned CLI doctor returned no unique codegraph_managed_v1 check")
+    row = rows[0]
+    if row.get("status") not in {"pass", "skip", "fail"}:
+        raise ValueError("Pinned CLI doctor returned invalid status for codegraph_managed_v1")
+    for key in ("configured", "ready"):
+        # bool is deliberately checked by type: Python otherwise treats 0/1 as
+        # members of {False, True}, weakening the native JSON contract.
+        if not isinstance(row.get(key), bool):
+            raise ValueError(f"Pinned CLI doctor returned invalid {key} for codegraph_managed_v1")
+    # A pass is the only state that proves a usable operator registry. Skip is the
+    # honest default-off state; fail is invalid configuration, never availability.
+    if row["status"] == "pass":
+        if row.get("schemaVersion") != 1 or row.get("protocol") != "codegraph_worktree_adapter_v1":
+            raise ValueError("Pinned CLI doctor returned an incompatible codegraph_managed_v1 schema")
+        if not isinstance(row.get("expectedVersion"), str) or not row["expectedVersion"]:
+            raise ValueError("Pinned CLI doctor omitted the managed CodeGraph version")
+        if not isinstance(row.get("contractSha256"), str) or not re.fullmatch(
+                r"[0-9a-f]{64}", row["contractSha256"]):
+            raise ValueError("Pinned CLI doctor returned an invalid managed-resource contract digest")
+        if not (row["configured"] and row["ready"]):
+            raise ValueError("Pinned CLI doctor contradicted its codegraph_managed_v1 pass status")
+    if row["status"] == "skip" and (row["configured"] or row["ready"]):
+        raise ValueError("Pinned CLI doctor contradicted its codegraph_managed_v1 skip status")
+    if row["status"] == "fail" and (not row["configured"] or row["ready"]):
+        raise ValueError("Pinned CLI doctor contradicted its codegraph_managed_v1 fail status")
+    return row
 
 
 def doctor(settings: dict) -> dict:
     source = verify_source(settings)
-    validate_engine_contract(settings, source)
+    mode = code_intelligence_mode(settings)
+    supported = code_intelligence_support(settings, source)
+    registry = None
+    if supported:
+        registry = code_intelligence_registry(settings, source)
+    if mode != "off" and not supported:
+        raise ValueError("Pinned Archon does not support codegraph_managed_v1")
+    if mode == "required" and registry and registry["status"] != "pass":
+        raise ValueError("CodeGraph is required but the Archon codegraph_managed_v1 registry is not ready")
+    # An invalid or absent registry is diagnostic for optional mode: Archon's
+    # sealed run policy owns the observable raw-navigation fallback. Only the
+    # operator's required mode is fail-closed before provider spend.
     # Global flags such as --verbose live in the root help, while --json may appear
     # only in examples and --events is owned by the workflow subcommand. A flag
     # counts as documented at any of those native help levels; the subcommand
@@ -265,7 +384,15 @@ def doctor(settings: dict) -> dict:
         validate(settings, source, name)
     return {"source": str(source), "revision": settings["revision"],
             "workflows": sorted(discovered), "automation": "supervised integration",
-            "provider_configuration": "native configuration preserved; authentication not live-tested"}
+            "provider_configuration": "native configuration preserved; authentication not live-tested",
+            "code_intelligence": {
+                "mode": mode,
+                "resource": CODEGRAPH_MANAGED_RESOURCE,
+                "engine_supported": supported,
+                "registry_status": registry["status"] if registry else "unsupported",
+                "registry_configured": registry["configured"] if registry else False,
+                "registry_ready": registry["ready"] if registry else False,
+            }}
 
 
 RETIRED = {
@@ -302,10 +429,54 @@ def with_default_inputs(name: str, args: list[str], options: list[str]) -> list[
     return [args[0], *injected, *args[1:]]
 
 
+def configure_code_intelligence(root: Path, args: list[str]) -> int:
+    if not args:
+        raise ValueError(
+            "Usage: factory code-intelligence enable --mode optional|required, or disable"
+        )
+    operation = args[0]
+    if operation == "disable":
+        if len(args) != 1:
+            raise ValueError("factory code-intelligence disable takes no arguments")
+        settings = read_settings(root)
+        updated = {**settings, "code_intelligence": {"mode": "off"}}
+        write_settings(root, updated)
+        print(json.dumps({"code_intelligence": {"mode": "off"}}, indent=2))
+        return 0
+    if operation != "enable" or len(args) != 3 or args[1] != "--mode":
+        raise ValueError(
+            "Usage: factory code-intelligence enable --mode optional|required, or disable"
+        )
+    mode = args[2]
+    if mode not in {"optional", "required"}:
+        raise ValueError("enable mode must be optional or required; use disable for off")
+    settings = read_settings(root)
+    source = verify_source(settings)
+    if not code_intelligence_support(settings, source):
+        raise ValueError("Pinned Archon does not support codegraph_managed_v1")
+    registry = code_intelligence_registry(settings, source)
+    if mode == "required" and registry["status"] != "pass":
+        raise ValueError(
+            "CodeGraph required mode needs a ready operator-owned codegraph_managed_v1 registry"
+        )
+    updated = {**settings, "code_intelligence": {"mode": mode}}
+    write_settings(root, updated)
+    print(json.dumps({"code_intelligence": {
+        "mode": mode,
+        "resource": CODEGRAPH_MANAGED_RESOURCE,
+        "registry_status": registry["status"],
+        "registry_ready": registry["ready"],
+    }}, indent=2))
+    return 0
+
+
 def invoke(root: Path, action: str, args: list[str]) -> int:
     args = list(args)
+    if action == "code-intelligence":
+        return configure_code_intelligence(root, args)
     expected_revision, args = expected_archon_revision(action, args)
     runtime_config = None
+    sealed_code_intelligence_mode = None
     options = args[:args.index("--")] if "--" in args else args[:]
     runtime_flags = [a for a in options if a.split("=", 1)[0] == "--runtime-host"]
     if runtime_flags:
@@ -362,8 +533,11 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         print("Local launch brake " + ("set. Active runs require cancel <run-id>." if action == "halt" else "cleared."))
         return 0
     for arg in args:
-        if arg.split("=", 1)[0] in {"--cwd", "--workflow-source"}:
-            raise ValueError("Factory owns --cwd and --workflow-source; select the application by working directory")
+        if arg.split("=", 1)[0] in {"--cwd", "--workflow-source", CODEGRAPH_RUN_FLAG}:
+            raise ValueError(
+                "Factory owns --cwd, --workflow-source, and --codegraph; "
+                "select CodeGraph only with factory code-intelligence"
+            )
     if action in {"run", "resume", "approve", "respond"} and stop.exists():
         raise ValueError("Local STOP is set. Use unhalt to permit launch/continuation; cancel remains available")
     settings = read_settings(root)
@@ -393,6 +567,19 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
         resuming = any(arg.split("=", 1)[0] == "--resume" for arg in options)
         if not resuming:
             native += ["--workflow-source", str(source)]
+            mode = code_intelligence_mode(settings)
+            sealed_code_intelligence_mode = mode
+            supported = code_intelligence_support(settings, source)
+            if mode != "off" and not supported:
+                raise ValueError("Pinned Archon does not support codegraph_managed_v1")
+            if supported:
+                if mode == "required":
+                    registry = code_intelligence_registry(settings, source)
+                    if registry["status"] != "pass":
+                        raise ValueError(
+                            "CodeGraph is required but the codegraph_managed_v1 registry is not ready"
+                        )
+                native += [CODEGRAPH_RUN_FLAG, mode]
             args = with_default_inputs(name, args, options)
     native += args
     if action == "status":
@@ -402,6 +589,12 @@ def invoke(root: Path, action: str, args: list[str]) -> int:
     def launch(env: dict | None = None) -> int:
         launch_settings, launch_source = settings, source
         launch_native = list(native)
+        if sealed_code_intelligence_mode is not None:
+            latest_settings = read_settings(root)
+            if code_intelligence_mode(latest_settings) != sealed_code_intelligence_mode:
+                raise ValueError(
+                    "Code-intelligence consent changed during preflight; retry the run"
+                )
         if expected_revision is not None:
             # Re-read the git-common-dir settings at the last possible point. A
             # linked worktree's local .factory file is not the consumer authority,
@@ -430,6 +623,7 @@ def main(argv: list[str] | None = None) -> int:
               "factory run <shared-workflow> --runtime-host <config.json> [foreground native arguments]\n"
               "Runtime host: fresh ordinary apps; detach/resume unsupported. Manual: python factory/runtime_host.py serve --help\n"
               "factory tick (one scheduled shared workflow, foreground)\n"
+              "factory code-intelligence enable --mode optional|required | disable\n"
               "factory list | doctor | status | get <run-id>\n"
               "factory approve | reject | respond | cancel | resume <run-id>\n"
               "factory halt | unhalt (local launch brake only)")

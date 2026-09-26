@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/ArnaudLafosse92100/Archon",
-  "integration_revision_required": "80d7725ab56364c729fcbdd0b0dc1e894f15f592",
+  "integration_revision_required": "25eb76925afef285dfa741805f0631c2a7fcf6cd",
   "description": "Pinned workflow-only SDLC source with grounded intake, reviewed delivery, scoped validation reuse, independent runtime and holdout verification, bounded repair, discovery handling, merge queues, and deterministic deployment. Factory remains a thin consumer; workflow gates own decisions and scheduling remains external.",
   "source_directory": ".archon/workflows/sdlc",
   "default_inputs": {
@@ -37,6 +37,7 @@
       "--model",
       "--adopt",
       "--detach",
+      "--codegraph",
       "--json"
     ],
     "list": [
@@ -68,6 +69,80 @@
         "transient",
         "unknown"
       ]
+    },
+    "workflow.credential_policy.codex": {
+      "version": 1,
+      "requiredKinds": [
+        "subscription"
+      ],
+      "evidence": "local_credential_resolution"
+    },
+    "workflow.credential_policy.claude": {
+      "version": 1,
+      "requiredKinds": [
+        "subscription"
+      ],
+      "evidence": "local_credential_resolution"
+    },
+    "workflow.provider_launch_attestation": {
+      "version": 1,
+      "evidence": "local_launch_preparation",
+      "envPolicy": "targeted_empty_overrides",
+      "aliasSemantics": "neutralized_not_absent",
+      "strictClaudeNeutralizedAliases": [
+        "ANTHROPIC_API_KEY",
+        "CLAUDE_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_AWS_API_KEY",
+        "ANTHROPIC_FOUNDRY_API_KEY",
+        "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+        "AWS_BEARER_TOKEN_BEDROCK",
+        "AGENT_PROXY_AUTH_TOKEN",
+        "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
+        "CLAUDE_CODE_HOST_AUTH_ENV_VAR",
+        "CLAUDE_CODE_HOST_CREDS_FILE",
+        "CLAUDE_CODE_HFI_BEARER_TOKEN",
+        "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+        "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+        "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR",
+        "CLAUDE_BRIDGE_OAUTH_TOKEN",
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "CLAUDE_CODE_USE_ANTHROPIC_AWS",
+        "CLAUDE_CODE_USE_ANTHROPIC_GOOGLE_CLOUD",
+        "CLAUDE_CODE_USE_MANTLE",
+        "CLAUDE_CODE_USE_GATEWAY",
+        "CLAUDE_CODE_SKIP_BEDROCK_AUTH",
+        "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+        "CLAUDE_CODE_SKIP_FOUNDRY_AUTH",
+        "CLAUDE_CODE_SKIP_ANTHROPIC_AWS_AUTH",
+        "CLAUDE_CODE_SKIP_ANTHROPIC_GOOGLE_CLOUD_AUTH",
+        "CLAUDE_CODE_SKIP_MANTLE_AUTH",
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_CUSTOM_HEADERS",
+        "CLAUDE_CODE_API_BASE_URL",
+        "CLAUDE_CODE_GB_BASE_URL",
+        "_CLAUDE_CODE_ASSUME_FIRST_PARTY_BASE_URL",
+        "ANTHROPIC_AWS_BASE_URL",
+        "ANTHROPIC_BEDROCK_BASE_URL",
+        "ANTHROPIC_BEDROCK_MANTLE_BASE_URL",
+        "ANTHROPIC_GOOGLE_CLOUD_BASE_URL",
+        "ANTHROPIC_VERTEX_BASE_URL",
+        "ANTHROPIC_FOUNDRY_BASE_URL",
+        "ANTHROPIC_UNIX_SOCKET",
+        "AWS_ENDPOINT_URL",
+        "AWS_ENDPOINT_URL_STS",
+        "AGENT_PROXY_URL",
+        "CLAUDE_BRIDGE_BASE_URL",
+        "CLAUDE_CODE_CUSTOM_OAUTH_URL",
+        "CLAUDE_LOCAL_OAUTH_API_BASE",
+        "CLAUDE_LOCAL_OAUTH_APPS_BASE",
+        "CLAUDE_LOCAL_OAUTH_CONSOLE_BASE",
+        "USE_LOCAL_OAUTH",
+        "USE_STAGING_OAUTH"
+      ],
+      "billingClaim": "unverified"
     }
   }
 }

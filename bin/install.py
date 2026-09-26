@@ -154,7 +154,21 @@ def install_source(repository: str, revision: str, cache: Path, bun: str) -> dic
 
 def configure(root: Path, settings: dict) -> None:
     path = within(consumer.shared_root(root), consumer.shared_root(root) / consumer.SETTINGS)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_suffix(".tmp")
-    temp.write_text(json.dumps(settings, indent=2) + "\n", encoding="utf-8")
-    temp.replace(path)
+    previous_policy = None
+    if path.is_file():
+        try:
+            previous = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as error:
+            raise ValueError(f"Invalid existing consumer settings: {path}") from error
+        consumer.validate_settings(previous)
+        previous_policy = previous.get("code_intelligence")
+    configured = dict(settings)
+    configured["code_intelligence"] = (
+        dict(previous_policy) if previous_policy is not None
+        else dict(consumer.DEFAULT_CODE_INTELLIGENCE)
+    )
+    # install_source() can only validate the newly fetched source with the
+    # default/off policy. Re-validate the complete candidate with the
+    # operator's preserved policy before replacing the durable settings.
+    consumer.doctor(configured)
+    consumer.write_settings(root, configured)

@@ -40,6 +40,27 @@ publication separately requires `publish_holds=true` in approve or auto merge mo
 `merge_mode=preview` is always read-only, and a published hold never authorizes a
 merge.
 
+## Code intelligence authority
+
+The operator-owned `code_intelligence.mode` in `.factory/consumer.json` is the
+only Factory consent authority. It defaults to `off` and may be changed only with
+`factory code-intelligence enable --mode optional|required`, `disable`, or a
+deliberate operator edit that passes the same strict validation. Workflow inputs,
+schedules, Bridge, JEV, and repository files cannot enable or elevate it.
+In particular, an input such as `--input codegraph=required` is ordinary workflow
+data; it does not change the engine policy sealed by Factory's native
+`--codegraph` flag.
+
+Factory never installs, initializes, updates, watches, indexes, or serves
+CodeGraph, and must not store or accept an adapter path, MCP command, secret, or
+derived index. Archon resolves the operator-owned `codegraph_managed_v1` registry
+and prepares the exact candidate worktree before providers start. In `optional`
+mode it records and uses ordinary navigation when the managed resource cannot be
+prepared; in `required` mode it fails before provider spend. A provider without
+the native MCP capability uses ordinary navigation only in `optional` mode; in
+`required` mode Archon refuses to start it. Such a provider must never claim
+CodeGraph evidence.
+
 ## Runtime and review evidence
 
 Runtime and holdout evidence must exercise the delivered candidate and match its

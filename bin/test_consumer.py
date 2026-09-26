@@ -36,17 +36,31 @@ with open(os.environ["FACTORY_TEST_TRACE"], "a", encoding="utf-8") as f:
 if args[:2] == ["version", "--json"]:
     revision = subprocess.run(["git", "-C", str(source), "rev-parse", "HEAD"],
                               check=True, capture_output=True, text=True).stdout.strip()
+    capabilities = [] if os.environ.get("FACTORY_TEST_CODEGRAPH_CAPABILITY") == "missing" else ["codegraph_managed_v1"]
     print(json.dumps({"name": "archon", "version": "fixture", "revision": revision,
-                      "contracts": {"node_failed.data.error_class": {
-                          "version": 1, "values": ["fatal", "transient", "unknown"]}}}))
+                      "capabilities": capabilities,
+                      "contracts": json.loads(os.environ["FACTORY_TEST_CONTRACTS"])}))
     raise SystemExit(0)
+if args[:2] == ["doctor", "--json"]:
+    status = os.environ.get("FACTORY_TEST_CODEGRAPH_STATUS", "pass")
+    row = {
+        "id": "codegraph_managed_v1",
+        "status": status,
+        "configured": status != "skip",
+        "ready": status == "pass",
+    }
+    if status == "pass":
+        row.update({"schemaVersion": 1, "protocol": "codegraph_worktree_adapter_v1",
+                    "expectedVersion": "1.5.0", "contractSha256": "a" * 64})
+    print(json.dumps({"ok": status != "fail", "checks": [row]}))
+    raise SystemExit(1 if status == "fail" else 0)
 if args == ["--help"]:
     print("--json --verbose")
     raise SystemExit(0)
 if "--help" in args:
     command = args[1]
     owned = {
-        "run": "--workflow-source --input --model --adopt --detach",
+        "run": "--workflow-source --input --model --adopt --detach --codegraph",
         "get": "--events",
         "approve": "--comment",
         "reject": "--reason",
@@ -111,13 +125,19 @@ class Fixture(unittest.TestCase):
         self.source = self.base / self.revision
         self.git(self.base, "clone", "-q", "--no-hardlinks", str(self.origin), str(self.source))
         (self.source / "node_modules").mkdir()
-        self.settings = {"source": str(self.source), "revision": self.revision, "bun": sys.executable}
+        self.settings = {"source": str(self.source), "revision": self.revision,
+                         "bun": sys.executable,
+                         "code_intelligence": {"mode": "off"}}
         self.trace = self.base / "argv.jsonl"
         self.env = patch.dict(os.environ, {"FACTORY_TEST_TRACE": str(self.trace),
+                         "FACTORY_TEST_CONTRACTS": json.dumps(consumer.MANIFEST["contracts"]),
                          "FACTORY_AGENT_CMD": "provider-must-never-run", "FACTORY_AUTONOMY": "4"})
         self.env.start()
         self.addCleanup(self.env.stop)
         configure(self.app, self.settings)
+        # Fixture installation now performs a policy-aware candidate doctor;
+        # runtime assertions below start from an empty invocation trace.
+        self.trace.unlink(missing_ok=True)
 
     def git(self, cwd, *args):
         result = consumer.execute(["git", *args], cwd)
@@ -134,6 +154,165 @@ class Fixture(unittest.TestCase):
 
 
 class ConsumerTests(Fixture):
+    def test_code_intelligence_settings_are_strict_and_legacy_defaults_off(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+        legacy = {key: value for key, value in self.settings.items()
+                  if key != "code_intelligence"}
+        settings_path.write_text(json.dumps(legacy))
+        self.assertEqual(consumer.code_intelligence_mode(consumer.read_settings(self.app)), "off")
+
+        invalid = (
+            {"mode": "sometimes"},
+            {"mode": "off", "command": "codegraph"},
+            {"mode": "required", "path": "/tmp/server.json"},
+            "required",
+        )
+        for policy in invalid:
+            with self.subTest(policy=policy):
+                settings_path.write_text(json.dumps({**legacy, "code_intelligence": policy}))
+                with self.assertRaisesRegex(ValueError, "Invalid consumer settings"):
+                    consumer.read_settings(self.app)
+
+    def test_new_run_seals_operator_mode_and_refuses_native_override(self):
+        result = self.command("run", "archon-ship", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual(argv[argv.index("--codegraph") + 1], "off")
+        self.assertFalse(any(row[:2] == ["doctor", "--json"] for row in self.calls()))
+
+        refused = self.command("run", "archon-ship", "--codegraph", "required", "--json")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("Factory owns", refused.stderr)
+
+    def test_default_off_remains_compatible_before_managed_resource_capability(self):
+        result = self.command("run", "archon-ship", "--json", env={
+            "FACTORY_TEST_CODEGRAPH_CAPABILITY": "missing",
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("--codegraph", json.loads(result.stdout)["argv"])
+        refused = self.command("code-intelligence", "enable", "--mode", "optional", env={
+            "FACTORY_TEST_CODEGRAPH_CAPABILITY": "missing",
+        })
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("does not support", refused.stderr)
+
+    def test_operator_enable_optional_allows_absent_registry_and_run_falls_back_natively(self):
+        with patch.dict(os.environ, {"FACTORY_TEST_CODEGRAPH_STATUS": "skip"}):
+            enabled = self.command("code-intelligence", "enable", "--mode", "optional")
+            self.assertEqual(enabled.returncode, 0, enabled.stderr)
+            self.assertEqual(consumer.code_intelligence_mode(consumer.read_settings(self.app)), "optional")
+            probes_before_run = len([row for row in self.calls()
+                                     if row[:2] == ["doctor", "--json"]])
+            result = self.command("run", "archon-ship", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual(argv[argv.index("--codegraph") + 1], "optional")
+        self.assertEqual(len([row for row in self.calls()
+                              if row[:2] == ["doctor", "--json"]]), probes_before_run)
+
+    def test_optional_invalid_registry_is_reported_but_does_not_block_native_fallback(self):
+        with patch.dict(os.environ, {"FACTORY_TEST_CODEGRAPH_STATUS": "fail"}):
+            enabled = self.command("code-intelligence", "enable", "--mode", "optional")
+            self.assertEqual(enabled.returncode, 0, enabled.stderr)
+            self.assertEqual(json.loads(enabled.stdout)["code_intelligence"]["registry_status"],
+                             "fail")
+            result = self.command("run", "archon-ship", "--json")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual(argv[argv.index("--codegraph") + 1], "optional")
+
+    def test_registry_probe_rejects_dishonest_or_weak_native_metadata(self):
+        base = {
+            "id": "codegraph_managed_v1", "status": "pass",
+            "configured": True, "ready": True, "schemaVersion": 1,
+            "protocol": "codegraph_worktree_adapter_v1", "expectedVersion": "1.5.0",
+            "contractSha256": "a" * 64,
+        }
+        invalid = (
+            {**base, "ready": 1},
+            {**base, "contractSha256": "not-a-digest"},
+            {**base, "expectedVersion": ""},
+            {**base, "status": "fail", "ready": True},
+        )
+        for row in invalid:
+            response = subprocess.CompletedProcess([], 0, json.dumps({"checks": [row]}), "")
+            with self.subTest(row=row), patch.object(consumer, "execute", return_value=response):
+                with self.assertRaises(ValueError):
+                    consumer.code_intelligence_registry(self.settings, self.source)
+
+    def test_consent_change_during_preflight_refuses_before_native_launch(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+        original_support = consumer.code_intelligence_support
+
+        def mutate_after_mode_read(settings, source):
+            current = json.loads(settings_path.read_text())
+            current["code_intelligence"] = {"mode": "optional"}
+            settings_path.write_text(json.dumps(current))
+            return original_support(settings, source)
+
+        with patch.object(consumer, "code_intelligence_support",
+                          side_effect=mutate_after_mode_read):
+            with self.assertRaisesRegex(ValueError, "consent changed during preflight"):
+                consumer.invoke(self.app, "run", ["archon-ship", "--json"])
+        self.assertFalse(any(row[:2] == ["workflow", "run"] for row in self.calls()))
+
+    def test_operator_enable_required_needs_ready_registry_and_never_launches_on_failure(self):
+        before = (consumer.shared_root(self.app) / consumer.SETTINGS).read_bytes()
+        with patch.dict(os.environ, {"FACTORY_TEST_CODEGRAPH_STATUS": "skip"}):
+            refused = self.command("code-intelligence", "enable", "--mode", "required")
+        self.assertNotEqual(refused.returncode, 0)
+        self.assertIn("needs a ready", refused.stderr)
+        self.assertEqual((consumer.shared_root(self.app) / consumer.SETTINGS).read_bytes(), before)
+
+        with patch.dict(os.environ, {"FACTORY_TEST_CODEGRAPH_STATUS": "pass"}):
+            enabled = self.command("code-intelligence", "enable", "--mode", "required")
+        self.assertEqual(enabled.returncode, 0, enabled.stderr)
+        self.assertEqual(consumer.code_intelligence_mode(consumer.read_settings(self.app)), "required")
+
+        successful = len([row for row in self.calls() if row[:2] == ["workflow", "run"]])
+        with patch.dict(os.environ, {"FACTORY_TEST_CODEGRAPH_STATUS": "skip"}):
+            refused_run = self.command("run", "archon-ship", "--json")
+        self.assertNotEqual(refused_run.returncode, 0)
+        self.assertIn("registry is not ready", refused_run.stderr)
+        self.assertEqual(
+            len([row for row in self.calls() if row[:2] == ["workflow", "run"]]), successful
+        )
+
+    def test_disable_is_local_and_does_not_require_a_working_registry(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+        configured = json.loads(settings_path.read_text())
+        configured["code_intelligence"] = {"mode": "required"}
+        settings_path.write_text(json.dumps(configured))
+        with patch.dict(os.environ, {"FACTORY_TEST_CODEGRAPH_STATUS": "fail"}):
+            disabled = self.command("code-intelligence", "disable")
+        self.assertEqual(disabled.returncode, 0, disabled.stderr)
+        self.assertEqual(consumer.code_intelligence_mode(consumer.read_settings(self.app)), "off")
+
+    def test_schedule_cannot_elevate_code_intelligence_policy(self):
+        schedule = self.app / ".factory/schedule.json"
+        schedule.write_text(json.dumps({
+            "workflow": "archon-ship",
+            "inputs": {"codegraph": "required"},
+        }))
+        result = self.command("tick")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        self.assertEqual(argv[argv.index("--codegraph") + 1], "off")
+        self.assertIn("codegraph=required", argv)
+
+    def test_code_intelligence_never_executes_a_codegraph_binary(self):
+        observed = []
+        original = consumer.execute
+
+        def recording_execute(argv, cwd, **kwargs):
+            observed.append(list(argv))
+            return original(argv, cwd, **kwargs)
+
+        with patch.object(consumer, "execute", side_effect=recording_execute):
+            self.assertEqual(consumer.invoke(self.app, "doctor", []), 0)
+        self.assertTrue(observed)
+        self.assertFalse(any(Path(argv[0]).name.startswith("codegraph") for argv in observed))
+
     def test_factory_state_labels_default_only_for_declaring_workflows(self):
         expected = consumer.MANIFEST["default_inputs"]["archon-triage"]["state_labels"]
         for workflow in ("archon-triage", "archon-ship", "archon-lifecycle"):
@@ -448,7 +627,10 @@ class ConsumerTests(Fixture):
     def test_capability_probe_refuses_unsupported_cli(self):
         with patch.object(consumer, "checked", return_value="no capabilities"), \
              patch.object(consumer, "validate_engine_contract"), \
-             patch.object(consumer, "verify_source", return_value=self.source):
+             patch.object(consumer, "verify_source", return_value=self.source), \
+             patch.object(consumer, "code_intelligence_support", return_value=True), \
+             patch.object(consumer, "code_intelligence_registry", return_value={
+                 "status": "pass", "configured": True, "ready": True}):
             with self.assertRaisesRegex(ValueError, "missing workflow"):
                 consumer.doctor(self.settings)
 
@@ -612,6 +794,58 @@ class SourceConformanceTests(unittest.TestCase):
 
 
 class InstallTests(Fixture):
+    def test_new_install_defaults_code_intelligence_off(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+        settings_path.unlink()
+        configure(self.app, {key: value for key, value in self.settings.items()
+                             if key != "code_intelligence"})
+        installed = json.loads(settings_path.read_text())
+        self.assertEqual(installed["code_intelligence"], {"mode": "off"})
+
+    def test_upgrade_preserves_operator_code_intelligence_consent(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+        configured = json.loads(settings_path.read_text())
+        configured["code_intelligence"] = {"mode": "required"}
+        settings_path.write_text(json.dumps(configured))
+        replacement = dict(self.settings)
+        replacement.pop("code_intelligence")
+        configure(self.app, replacement)
+        upgraded = json.loads(settings_path.read_text())
+        self.assertEqual(upgraded["source"], self.settings["source"])
+        self.assertEqual(upgraded["code_intelligence"], {"mode": "required"})
+
+    def test_upgrade_required_refuses_candidate_without_capability_and_preserves_settings(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+        configured = json.loads(settings_path.read_text())
+        configured["code_intelligence"] = {"mode": "required"}
+        settings_path.write_text(json.dumps(configured))
+        before = settings_path.read_bytes()
+        with patch.dict(os.environ, {"FACTORY_TEST_CODEGRAPH_CAPABILITY": "missing"}):
+            with self.assertRaisesRegex(ValueError, "codegraph_managed_v1"):
+                configure(self.app, {key: value for key, value in self.settings.items()
+                                     if key != "code_intelligence"})
+        self.assertEqual(settings_path.read_bytes(), before)
+
+    def test_upgrade_required_refuses_unready_registry_and_preserves_settings(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+        configured = json.loads(settings_path.read_text())
+        configured["code_intelligence"] = {"mode": "required"}
+        settings_path.write_text(json.dumps(configured))
+        before = settings_path.read_bytes()
+        with patch.dict(os.environ, {"FACTORY_TEST_CODEGRAPH_STATUS": "fail"}):
+            with self.assertRaisesRegex(ValueError, "doctor exited unexpectedly|not ready"):
+                configure(self.app, {key: value for key, value in self.settings.items()
+                                     if key != "code_intelligence"})
+        self.assertEqual(settings_path.read_bytes(), before)
+
+    def test_upgrade_refuses_invalid_existing_code_intelligence_policy(self):
+        settings_path = consumer.shared_root(self.app) / consumer.SETTINGS
+        configured = json.loads(settings_path.read_text())
+        configured["code_intelligence"] = {"mode": "required", "command": "malicious"}
+        settings_path.write_text(json.dumps(configured))
+        with self.assertRaisesRegex(ValueError, "code_intelligence must contain only"):
+            configure(self.app, self.settings)
+
     def test_agents_pointer_preserves_existing_bytes_and_is_idempotent(self):
         agents = self.app / "AGENTS.md"
         original = b"# Existing guidance\r\n\r\nKeep this byte-for-byte."

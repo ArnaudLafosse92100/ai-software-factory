@@ -91,6 +91,26 @@ It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's native
 factory-specific bootstrap, runtime, review and state-label requirements that the
 general-purpose shared workflows intentionally do not assume.
 
+Code intelligence is an explicit operator choice and defaults to `off`. Factory
+does not install, index, watch, or serve CodeGraph, and it never accepts an MCP
+command or executable path from a repository, workflow, schedule, Bridge, or JEV.
+Once the matching Archon managed-resource capability and operator-owned registry
+are installed, the operator may select:
+
+```bash
+python factory/consumer.py code-intelligence enable --mode optional
+python factory/consumer.py code-intelligence enable --mode required
+python factory/consumer.py code-intelligence disable
+```
+
+`optional` lets Archon fall back explicitly to ordinary repository navigation if
+the managed registry or per-worktree preparation is unavailable. `required` fails
+before a provider starts unless the registry is ready. Upgrades preserve the
+operator's existing selection; legacy installations and new installs remain off.
+`factory doctor` reports the selected mode, engine capability, and non-secret
+registry readiness. Only Archon and the operator-managed adapter may prepare or
+serve the exact worktree index.
+
 **2. Configure Archon.**
 
 Read the installed source's configuration documentation and configure the user's
@@ -254,6 +274,7 @@ Run these from the application repo after installation:
 ```bash
 python factory/consumer.py doctor
 python factory/consumer.py list
+python factory/consumer.py code-intelligence enable --mode optional
 python factory/consumer.py run archon-ship --input target=https://github.com/OWNER/REPO/issues/1 --detach --json
 python factory/consumer.py get <run-id> --json --verbose --events
 python factory/consumer.py status --all --json
