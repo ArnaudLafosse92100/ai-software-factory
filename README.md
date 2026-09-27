@@ -46,7 +46,7 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`285149852e284940b131f6ed482779631935b880`, whose SDLC pack supports grounded
+`285149858cd09cc5a33c5af70f3c4813583b8ba5`, whose SDLC pack supports grounded
 intake, reviewed delivery, scoped validation reuse, independent runtime and holdout
 verification, bounded repair, discovery handling, merge queues and deterministic
 deployment. Its portable capability aliases let a run bind implementation,
