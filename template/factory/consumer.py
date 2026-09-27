@@ -18,7 +18,7 @@ EXPECTED_ARCHON_REVISION_FLAG = "--expected-archon-revision"
 CODE_INTELLIGENCE_MODES = frozenset({"off", "optional", "required"})
 DEFAULT_CODE_INTELLIGENCE = {"mode": "off"}
 CODEGRAPH_MANAGED_RESOURCE = "codegraph_managed_v1"
-PORTABLE_MODEL_ALIASES_CAPABILITY = "portable-model-aliases-v1"
+PORTABLE_MODEL_ALIASES_CAPABILITY = "portable-model-aliases-v2"
 CODEGRAPH_RUN_FLAG = "--codegraph"
 FACTORY_OWNED_CAPABILITIES = {
     "run": {EXPECTED_ARCHON_REVISION_FLAG},
@@ -314,7 +314,7 @@ def validate_model_binding_support(settings: dict, source: Path) -> None:
     if (not isinstance(capabilities, list)
             or PORTABLE_MODEL_ALIASES_CAPABILITY not in capabilities):
         raise ValueError(
-            "Pinned Archon does not support portable-model-aliases-v1"
+            "Pinned Archon does not support portable-model-aliases-v2"
         )
 
 

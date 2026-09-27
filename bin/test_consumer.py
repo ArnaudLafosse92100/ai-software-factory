@@ -38,7 +38,7 @@ if args[:2] == ["version", "--json"]:
                               check=True, capture_output=True, text=True).stdout.strip()
     capabilities = [] if os.environ.get("FACTORY_TEST_CODEGRAPH_CAPABILITY") == "missing" else ["codegraph_managed_v1"]
     if os.environ.get("FACTORY_TEST_MODEL_BINDING_CAPABILITY") != "missing":
-        capabilities.append("portable-model-aliases-v1")
+        capabilities.append("portable-model-aliases-v2")
     print(json.dumps({"name": "archon", "version": "fixture", "revision": revision,
                       "capabilities": capabilities,
                       "contracts": json.loads(os.environ["FACTORY_TEST_CONTRACTS"])}))
@@ -62,7 +62,7 @@ if args == ["--help"]:
 if "--help" in args:
     command = args[1]
     owned = {
-        "run": "--workflow-source --input --model --adopt --detach --codegraph",
+        "run": "--workflow-source --input --model --config --adopt --detach --codegraph",
         "get": "--events",
         "approve": "--comment",
         "reject": "--reason",
@@ -158,7 +158,7 @@ class Fixture(unittest.TestCase):
 class ConsumerTests(Fixture):
     def test_doctor_requires_portable_model_alias_capability(self):
         with patch.dict(os.environ, {"FACTORY_TEST_MODEL_BINDING_CAPABILITY": "missing"}):
-            with self.assertRaisesRegex(ValueError, "portable-model-aliases-v1"):
+            with self.assertRaisesRegex(ValueError, "portable-model-aliases-v2"):
                 consumer.doctor(self.settings)
 
     def test_code_intelligence_settings_are_strict_and_legacy_defaults_off(self):
@@ -371,6 +371,27 @@ class ConsumerTests(Fixture):
         )
         self.assertEqual(argv.count("--model"), 1)
         self.assertEqual(argv.count("--model=@reviewer=claude/opus"), 1)
+
+    def test_run_config_and_explorer_binding_pass_through_unchanged(self):
+        config = self.base / "strict subscription policy.yaml"
+        config.write_text("credentialPolicy: {}\n", encoding="utf-8")
+        result = self.command(
+            "run",
+            "archon-review",
+            "--config",
+            str(config),
+            "--model=@explorer=pi/openrouter/deepseek/deepseek-v4-flash-0731",
+            "--json",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        argv = json.loads(result.stdout)["argv"]
+        config_index = argv.index("--config")
+        self.assertEqual(argv[config_index:config_index + 2], ["--config", str(config)])
+        self.assertEqual(argv.count("--config"), 1)
+        self.assertEqual(
+            argv.count("--model=@explorer=pi/openrouter/deepseek/deepseek-v4-flash-0731"),
+            1,
+        )
 
     def test_expected_archon_revision_is_consumed_once_and_never_forwarded(self):
         result = self.command(
