@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/ArnaudLafosse92100/Archon",
-  "integration_revision_required": "217c5602ad2cd105e871660b505ac94606e2edf9",
+  "integration_revision_required": "ded706a39f67edbdc8938095f39c581182069143",
   "description": "Pinned workflow-only SDLC source with grounded intake, reviewed delivery, scoped validation reuse, independent runtime and holdout verification, bounded repair, discovery handling, merge queues, and deterministic deployment. Factory remains a thin consumer; workflow gates own decisions and scheduling remains external.",
   "source_directory": ".archon/workflows/sdlc",
   "default_inputs": {
@@ -133,7 +133,7 @@
     "workflow.provider_launch_attestation": {
       "version": 1,
       "evidence": "local_launch_preparation",
-      "envPolicy": "targeted_empty_overrides",
+      "envPolicy": "strict_child_allowlist_v1",
       "aliasSemantics": "neutralized_not_absent",
       "strictClaudeNeutralizedAliases": [
         "ANTHROPIC_API_KEY",
@@ -142,6 +142,8 @@
         "ANTHROPIC_AWS_API_KEY",
         "ANTHROPIC_FOUNDRY_API_KEY",
         "ANTHROPIC_FOUNDRY_AUTH_TOKEN",
+        "ANTHROPIC_IDENTITY_TOKEN",
+        "ANTHROPIC_IDENTITY_TOKEN_FILE",
         "AWS_BEARER_TOKEN_BEDROCK",
         "AGENT_PROXY_AUTH_TOKEN",
         "CLAUDE_CODE_API_KEY_FILE_DESCRIPTOR",
@@ -150,7 +152,10 @@
         "CLAUDE_CODE_HOST_CREDS_FILE",
         "CLAUDE_CODE_HFI_BEARER_TOKEN",
         "CLAUDE_CODE_OAUTH_TOKEN_FILE_DESCRIPTOR",
+        "CLAUDE_CODE_OAUTH_REFRESH_TOKEN",
         "CLAUDE_CODE_SESSION_ACCESS_TOKEN",
+        "CLAUDE_SESSION_INGRESS_TOKEN_FILE",
+        "CLAUDE_TRUSTED_DEVICE_TOKEN",
         "CLAUDE_CODE_WEBSOCKET_AUTH_FILE_DESCRIPTOR",
         "CLAUDE_BRIDGE_OAUTH_TOKEN",
         "CLAUDE_CODE_USE_BEDROCK",
@@ -180,6 +185,11 @@
         "ANTHROPIC_UNIX_SOCKET",
         "AWS_ENDPOINT_URL",
         "AWS_ENDPOINT_URL_STS",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+        "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+        "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+        "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+        "CLOUDSDK_AUTH_ACCESS_TOKEN",
         "AGENT_PROXY_URL",
         "CLAUDE_BRIDGE_BASE_URL",
         "CLAUDE_CODE_CUSTOM_OAUTH_URL",
