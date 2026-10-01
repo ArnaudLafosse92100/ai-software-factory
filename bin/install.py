@@ -152,23 +152,46 @@ def install_source(repository: str, revision: str, cache: Path, bun: str) -> dic
     return settings
 
 
+# The value every pre-removal installer wrote by default. It carried no behavior,
+# so an upgrade may drop it; any other leftover consent is refused by
+# consumer.validate_settings() and needs a deliberate operator edit.
+LEGACY_CODE_INTELLIGENCE_DEFAULT = {"mode": "off"}
+
+
+def write_settings(root: Path, settings: dict) -> None:
+    """Atomically write machine-local settings in the shared Git root."""
+    settings = consumer.validate_settings(settings)
+    path = within(consumer.shared_root(root), consumer.shared_root(root) / consumer.SETTINGS)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp",
+                                           dir=path.parent)
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = -1
+            json.dump(settings, handle, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.exists():
+            shutil.copystat(path, temporary)
+        os.replace(temporary, path)
+    finally:
+        if fd != -1:
+            os.close(fd)
+        temporary.unlink(missing_ok=True)
+
+
 def configure(root: Path, settings: dict) -> None:
     path = within(consumer.shared_root(root), consumer.shared_root(root) / consumer.SETTINGS)
-    previous_policy = None
     if path.is_file():
         try:
             previous = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as error:
             raise ValueError(f"Invalid existing consumer settings: {path}") from error
+        if isinstance(previous, dict) and \
+                previous.get("code_intelligence") == LEGACY_CODE_INTELLIGENCE_DEFAULT:
+            previous = {k: v for k, v in previous.items() if k != "code_intelligence"}
         consumer.validate_settings(previous)
-        previous_policy = previous.get("code_intelligence")
-    configured = dict(settings)
-    configured["code_intelligence"] = (
-        dict(previous_policy) if previous_policy is not None
-        else dict(consumer.DEFAULT_CODE_INTELLIGENCE)
-    )
-    # install_source() can only validate the newly fetched source with the
-    # default/off policy. Re-validate the complete candidate with the
-    # operator's preserved policy before replacing the durable settings.
-    consumer.doctor(configured)
-    consumer.write_settings(root, configured)
+    consumer.doctor(settings)
+    write_settings(root, settings)

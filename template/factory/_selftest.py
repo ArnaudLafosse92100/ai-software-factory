@@ -20,6 +20,19 @@ class InstalledTests(unittest.TestCase):
     def test_consumer_has_no_legacy_stage_api(self):
         for name in ("launch", "reconcile", "consume", "authorized", "validate_receipt"):
             self.assertFalse(hasattr(consumer, name))
+    def test_codegraph_integration_is_refused_not_forwarded(self):
+        self.assertNotIn("--codegraph", consumer.MANIFEST["capabilities"]["run"])
+        with self.assertRaisesRegex(ValueError, "code_intelligence is no longer supported"):
+            consumer.validate_settings({"code_intelligence": {"mode": "off"}})
+        root = Path(__file__).resolve().parent.parent
+        for flag in (["--codegraph", "required"], ["--codegraph=off"]):
+            with self.assertRaisesRegex(ValueError, "--codegraph is not supported"):
+                consumer.invoke(root, "status", flag)
+        with self.assertRaisesRegex(ValueError, "Factory owns --cwd and --workflow-source"):
+            consumer.invoke(root, "status", ["--cwd", "/tmp"])
+        with contextlib.redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(consumer.invoke(root, "code-intelligence", ["enable", "--mode", "required"]), 2)
+        self.assertIn("CodeGraph integration was removed", err.getvalue())
 
 if __name__ == "__main__":
     import sys

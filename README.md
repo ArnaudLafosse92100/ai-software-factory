@@ -46,7 +46,7 @@ Archon source, including the shared workflows; you do not need to check out Arch
 or merge its PRs yourself.
 
 **Current status:** the default pins exact Archon revision
-`2d25710eb8e4f825fe4ac2f5c135c4778a1d55c6`, whose SDLC pack supports grounded
+`9242d785950b5a03b8db2a3c58ee79c289921a6c`, whose SDLC pack supports grounded
 intake, reviewed delivery, scoped validation reuse, independent runtime and holdout
 verification, bounded repair, discovery handling, merge queues and deterministic
 deployment. Its portable capability aliases let a run bind implementation,
@@ -91,25 +91,11 @@ It also adds one pointer to `factory/WORKFLOW_POLICY.md` in the project's native
 factory-specific bootstrap, runtime, review and state-label requirements that the
 general-purpose shared workflows intentionally do not assume.
 
-Code intelligence is an explicit operator choice and defaults to `off`. Factory
-does not install, index, watch, or serve CodeGraph, and it never accepts an MCP
-command or executable path from a repository, workflow, schedule, Bridge, or JEV.
-Once the matching Archon managed-resource capability and operator-owned registry
-are installed, the operator may select:
-
-```bash
-python factory/consumer.py code-intelligence enable --mode optional
-python factory/consumer.py code-intelligence enable --mode required
-python factory/consumer.py code-intelligence disable
-```
-
-`optional` lets Archon fall back explicitly to ordinary repository navigation if
-the managed registry or per-worktree preparation is unavailable. `required` fails
-before a provider starts unless the registry is ready. Upgrades preserve the
-operator's existing selection; legacy installations and new installs remain off.
-`factory doctor` reports the selected mode, engine capability, and non-secret
-registry readiness. Only Archon and the operator-managed adapter may prepare or
-serve the exact worktree index.
+Factory has no code-intelligence integration. The CodeGraph integration was
+removed: `factory code-intelligence` is a retired operation, `--codegraph` is
+refused in every factory command, and a leftover `code_intelligence` field in
+`.factory/consumer.json` is refused with a pointer to delete it. `factory init`
+drops only the `{"mode": "off"}` default that earlier installers wrote.
 
 **2. Configure Archon.**
 
@@ -274,7 +260,6 @@ Run these from the application repo after installation:
 ```bash
 python factory/consumer.py doctor
 python factory/consumer.py list
-python factory/consumer.py code-intelligence enable --mode optional
 python factory/consumer.py run archon-ship --input target=https://github.com/OWNER/REPO/issues/1 --detach --json
 python factory/consumer.py get <run-id> --json --verbose --events
 python factory/consumer.py status --all --json
